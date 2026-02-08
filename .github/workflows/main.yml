@@ -1,52 +1,57 @@
-name: Build Ginkgo Kernel (KSU)
+name: Build Kernel Ginkgo (KSU)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
+    - name: Checkout source
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ksun
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y \
-            git bc bison flex \
-            build-essential \
-            libssl-dev libelf-dev \
-            dwarves \
-            python3 \
-            ccache \
-            zip unzip \
-            lld llvm clang
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          bc bison build-essential ccache curl flex git \
+          libssl-dev libncurses-dev lzop python-is-python3 \
+          unzip zip zstd
 
-      - name: Setup environment
-        run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "LLVM=1" >> $GITHUB_ENV
-          echo "LLVM_IAS=1" >> $GITHUB_ENV
+    - name: Setup Proton Clang
+      run: |
+        wget https://github.com/kdrag0n/proton-clang/releases/download/20210130/proton-clang-20210130.tar.zst
+        tar -I zstd -xf proton-clang-20210130.tar.zst
+        echo "$(pwd)/proton-clang/bin" >> $GITHUB_PATH
 
-      - name: Kernel defconfig
-        run: |
-          make vendor/ginkgo_defconfig
+    - name: Export build variables
+      run: |
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "SUBARCH=arm64" >> $GITHUB_ENV
+        echo "CC=clang" >> $GITHUB_ENV
+        echo "LD=ld.lld" >> $GITHUB_ENV
+        echo "AR=llvm-ar" >> $GITHUB_ENV
+        echo "NM=llvm-nm" >> $GITHUB_ENV
+        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+        echo "STRIP=llvm-strip" >> $GITHUB_ENV
 
-      - name: Build kernel
-        run: |
-          make -j$(nproc)
+    - name: Kernel defconfig
+      run: |
+        make vendor/ginkgo_defconfig
 
-      - name: Upload Image.gz-dtb
-        uses: actions/upload-artifact@v4
-        with:
-          name: ginkgo-kernel
-          path: |
-            arch/arm64/boot/Image.gz*
+    - name: Build kernel
+      run: |
+        make -j$(nproc)
+
+    - name: Upload Image.gz
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-ginkgo-ksun
+        path: |
+          out/arch/arm64/boot/Image.gz
+          out/arch/arm64/boot/Image.gz-dtb
