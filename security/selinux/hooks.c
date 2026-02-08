@@ -272,11 +272,10 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
  * Try reloading inode security labels that have been marked as invalid.  The
  * @may_sleep parameter indicates when sleeping and thus reloading labels is
  * allowed; when set to false, returns -ECHILD when the label is
- * invalid.  The @opt_dentry parameter should be set to a dentry of the inode;
- * when no dentry is available, set it to NULL instead.
+ * invalid.  The @dentry parameter should be set to a dentry of the inode.
  */
 static int __inode_security_revalidate(struct inode *inode,
-				       struct dentry *opt_dentry,
+				       struct dentry *dentry,
 				       bool may_sleep)
 {
 	struct inode_security_struct *isec = inode->i_security;
@@ -293,7 +292,7 @@ static int __inode_security_revalidate(struct inode *inode,
 		 * @opt_dentry is NULL and no dentry for this inode can be
 		 * found; in that case, continue using the old label.
 		 */
-		inode_doinit_with_dentry(inode, opt_dentry);
+		inode_doinit_with_dentry(inode, dentry);
 	}
 	return 0;
 }
@@ -1594,8 +1593,15 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 			/* Called from d_instantiate or d_splice_alias. */
 			dentry = dget(opt_dentry);
 		} else {
-			/* Called from selinux_complete_init, try to find a dentry. */
+			/*
+			 * Called from selinux_complete_init, try to find a dentry.
+			 * Some filesystems really want a connected one, so try
+			 * that first.  We could split SECURITY_FS_USE_XATTR in
+			 * two, depending upon that...
+			 */
 			dentry = d_find_alias(inode);
+			if (!dentry)
+				dentry = d_find_any_alias(inode);
 		}
 		if (!dentry) {
 			/*
@@ -1700,14 +1706,19 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 		if ((sbsec->flags & SE_SBGENFS) && !S_ISLNK(inode->i_mode)) {
 			/* We must have a dentry to determine the label on
 			 * procfs inodes */
-			if (opt_dentry)
+			if (opt_dentry) {
 				/* Called from d_instantiate or
 				 * d_splice_alias. */
 				dentry = dget(opt_dentry);
-			else
+			} else {
 				/* Called from selinux_complete_init, try to
-				 * find a dentry. */
+				 * find a dentry.  Some filesystems really want
+				 * a connected one, so try that first.
+				 */
 				dentry = d_find_alias(inode);
+				if (!dentry)
+					dentry = d_find_any_alias(inode);
+			}
 			/*
 			 * This can be hit on boot when a file is accessed
 			 * before the policy is loaded.  When we load policy we
@@ -3180,6 +3191,7 @@ static noinline int audit_inode_permission(struct inode *inode,
 					   int result,
 					   unsigned flags)
 {
+#ifdef CONFIG_AUDIT
 	struct common_audit_data ad;
 	struct inode_security_struct *isec = inode->i_security;
 	int rc;
@@ -3192,6 +3204,7 @@ static noinline int audit_inode_permission(struct inode *inode,
 			    audited, denied, result, &ad, flags);
 	if (rc)
 		return rc;
+#endif
 	return 0;
 }
 
@@ -5792,54 +5805,54 @@ static void selinux_msg_msg_free_security(struct msg_msg *msg)
 }
 
 /* message queue security operations */
-static int selinux_msg_queue_alloc_security(struct msg_queue *msq)
+static int selinux_msg_queue_alloc_security(struct kern_ipc_perm *msq)
 {
 	struct ipc_security_struct *isec;
 	struct common_audit_data ad;
 	u32 sid = current_sid();
 	int rc;
 
-	rc = ipc_alloc_security(&msq->q_perm, SECCLASS_MSGQ);
+	rc = ipc_alloc_security(msq, SECCLASS_MSGQ);
 	if (rc)
 		return rc;
 
-	isec = msq->q_perm.security;
+	isec = msq->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = msq->q_perm.key;
+	ad.u.ipc_id = msq->key;
 
 	rc = avc_has_perm(&selinux_state,
 			  sid, isec->sid, SECCLASS_MSGQ,
 			  MSGQ__CREATE, &ad);
 	if (rc) {
-		ipc_free_security(&msq->q_perm);
+		ipc_free_security(msq);
 		return rc;
 	}
 	return 0;
 }
 
-static void selinux_msg_queue_free_security(struct msg_queue *msq)
+static void selinux_msg_queue_free_security(struct kern_ipc_perm *msq)
 {
-	ipc_free_security(&msq->q_perm);
+	ipc_free_security(msq);
 }
 
-static int selinux_msg_queue_associate(struct msg_queue *msq, int msqflg)
+static int selinux_msg_queue_associate(struct kern_ipc_perm *msq, int msqflg)
 {
 	struct ipc_security_struct *isec;
 	struct common_audit_data ad;
 	u32 sid = current_sid();
 
-	isec = msq->q_perm.security;
+	isec = msq->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = msq->q_perm.key;
+	ad.u.ipc_id = msq->key;
 
 	return avc_has_perm(&selinux_state,
 			    sid, isec->sid, SECCLASS_MSGQ,
 			    MSGQ__ASSOCIATE, &ad);
 }
 
-static int selinux_msg_queue_msgctl(struct msg_queue *msq, int cmd)
+static int selinux_msg_queue_msgctl(struct kern_ipc_perm *msq, int cmd)
 {
 	int err;
 	int perms;
@@ -5865,11 +5878,11 @@ static int selinux_msg_queue_msgctl(struct msg_queue *msq, int cmd)
 		return 0;
 	}
 
-	err = ipc_has_perm(&msq->q_perm, perms);
+	err = ipc_has_perm(msq, perms);
 	return err;
 }
 
-static int selinux_msg_queue_msgsnd(struct msg_queue *msq, struct msg_msg *msg, int msqflg)
+static int selinux_msg_queue_msgsnd(struct kern_ipc_perm *msq, struct msg_msg *msg, int msqflg)
 {
 	struct ipc_security_struct *isec;
 	struct msg_security_struct *msec;
@@ -5877,7 +5890,7 @@ static int selinux_msg_queue_msgsnd(struct msg_queue *msq, struct msg_msg *msg, 
 	u32 sid = current_sid();
 	int rc;
 
-	isec = msq->q_perm.security;
+	isec = msq->security;
 	msec = msg->security;
 
 	/*
@@ -5895,7 +5908,7 @@ static int selinux_msg_queue_msgsnd(struct msg_queue *msq, struct msg_msg *msg, 
 	}
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = msq->q_perm.key;
+	ad.u.ipc_id = msq->key;
 
 	/* Can this process write to the queue? */
 	rc = avc_has_perm(&selinux_state,
@@ -5915,7 +5928,7 @@ static int selinux_msg_queue_msgsnd(struct msg_queue *msq, struct msg_msg *msg, 
 	return rc;
 }
 
-static int selinux_msg_queue_msgrcv(struct msg_queue *msq, struct msg_msg *msg,
+static int selinux_msg_queue_msgrcv(struct kern_ipc_perm *msq, struct msg_msg *msg,
 				    struct task_struct *target,
 				    long type, int mode)
 {
@@ -5925,11 +5938,11 @@ static int selinux_msg_queue_msgrcv(struct msg_queue *msq, struct msg_msg *msg,
 	u32 sid = task_sid(target);
 	int rc;
 
-	isec = msq->q_perm.security;
+	isec = msq->security;
 	msec = msg->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = msq->q_perm.key;
+	ad.u.ipc_id = msq->key;
 
 	rc = avc_has_perm(&selinux_state,
 			  sid, isec->sid,
@@ -5942,47 +5955,47 @@ static int selinux_msg_queue_msgrcv(struct msg_queue *msq, struct msg_msg *msg,
 }
 
 /* Shared Memory security operations */
-static int selinux_shm_alloc_security(struct shmid_kernel *shp)
+static int selinux_shm_alloc_security(struct kern_ipc_perm *shp)
 {
 	struct ipc_security_struct *isec;
 	struct common_audit_data ad;
 	u32 sid = current_sid();
 	int rc;
 
-	rc = ipc_alloc_security(&shp->shm_perm, SECCLASS_SHM);
+	rc = ipc_alloc_security(shp, SECCLASS_SHM);
 	if (rc)
 		return rc;
 
-	isec = shp->shm_perm.security;
+	isec = shp->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = shp->shm_perm.key;
+	ad.u.ipc_id = shp->key;
 
 	rc = avc_has_perm(&selinux_state,
 			  sid, isec->sid, SECCLASS_SHM,
 			  SHM__CREATE, &ad);
 	if (rc) {
-		ipc_free_security(&shp->shm_perm);
+		ipc_free_security(shp);
 		return rc;
 	}
 	return 0;
 }
 
-static void selinux_shm_free_security(struct shmid_kernel *shp)
+static void selinux_shm_free_security(struct kern_ipc_perm *shp)
 {
-	ipc_free_security(&shp->shm_perm);
+	ipc_free_security(shp);
 }
 
-static int selinux_shm_associate(struct shmid_kernel *shp, int shmflg)
+static int selinux_shm_associate(struct kern_ipc_perm *shp, int shmflg)
 {
 	struct ipc_security_struct *isec;
 	struct common_audit_data ad;
 	u32 sid = current_sid();
 
-	isec = shp->shm_perm.security;
+	isec = shp->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = shp->shm_perm.key;
+	ad.u.ipc_id = shp->key;
 
 	return avc_has_perm(&selinux_state,
 			    sid, isec->sid, SECCLASS_SHM,
@@ -5990,7 +6003,7 @@ static int selinux_shm_associate(struct shmid_kernel *shp, int shmflg)
 }
 
 /* Note, at this point, shp is locked down */
-static int selinux_shm_shmctl(struct shmid_kernel *shp, int cmd)
+static int selinux_shm_shmctl(struct kern_ipc_perm *shp, int cmd)
 {
 	int perms;
 	int err;
@@ -6020,11 +6033,11 @@ static int selinux_shm_shmctl(struct shmid_kernel *shp, int cmd)
 		return 0;
 	}
 
-	err = ipc_has_perm(&shp->shm_perm, perms);
+	err = ipc_has_perm(shp, perms);
 	return err;
 }
 
-static int selinux_shm_shmat(struct shmid_kernel *shp,
+static int selinux_shm_shmat(struct kern_ipc_perm *shp,
 			     char __user *shmaddr, int shmflg)
 {
 	u32 perms;
@@ -6034,51 +6047,51 @@ static int selinux_shm_shmat(struct shmid_kernel *shp,
 	else
 		perms = SHM__READ | SHM__WRITE;
 
-	return ipc_has_perm(&shp->shm_perm, perms);
+	return ipc_has_perm(shp, perms);
 }
 
 /* Semaphore security operations */
-static int selinux_sem_alloc_security(struct sem_array *sma)
+static int selinux_sem_alloc_security(struct kern_ipc_perm *sma)
 {
 	struct ipc_security_struct *isec;
 	struct common_audit_data ad;
 	u32 sid = current_sid();
 	int rc;
 
-	rc = ipc_alloc_security(&sma->sem_perm, SECCLASS_SEM);
+	rc = ipc_alloc_security(sma, SECCLASS_SEM);
 	if (rc)
 		return rc;
 
-	isec = sma->sem_perm.security;
+	isec = sma->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = sma->sem_perm.key;
+	ad.u.ipc_id = sma->key;
 
 	rc = avc_has_perm(&selinux_state,
 			  sid, isec->sid, SECCLASS_SEM,
 			  SEM__CREATE, &ad);
 	if (rc) {
-		ipc_free_security(&sma->sem_perm);
+		ipc_free_security(sma);
 		return rc;
 	}
 	return 0;
 }
 
-static void selinux_sem_free_security(struct sem_array *sma)
+static void selinux_sem_free_security(struct kern_ipc_perm *sma)
 {
-	ipc_free_security(&sma->sem_perm);
+	ipc_free_security(sma);
 }
 
-static int selinux_sem_associate(struct sem_array *sma, int semflg)
+static int selinux_sem_associate(struct kern_ipc_perm *sma, int semflg)
 {
 	struct ipc_security_struct *isec;
 	struct common_audit_data ad;
 	u32 sid = current_sid();
 
-	isec = sma->sem_perm.security;
+	isec = sma->security;
 
 	ad.type = LSM_AUDIT_DATA_IPC;
-	ad.u.ipc_id = sma->sem_perm.key;
+	ad.u.ipc_id = sma->key;
 
 	return avc_has_perm(&selinux_state,
 			    sid, isec->sid, SECCLASS_SEM,
@@ -6086,7 +6099,7 @@ static int selinux_sem_associate(struct sem_array *sma, int semflg)
 }
 
 /* Note, at this point, sma is locked down */
-static int selinux_sem_semctl(struct sem_array *sma, int cmd)
+static int selinux_sem_semctl(struct kern_ipc_perm *sma, int cmd)
 {
 	int err;
 	u32 perms;
@@ -6125,11 +6138,11 @@ static int selinux_sem_semctl(struct sem_array *sma, int cmd)
 		return 0;
 	}
 
-	err = ipc_has_perm(&sma->sem_perm, perms);
+	err = ipc_has_perm(sma, perms);
 	return err;
 }
 
-static int selinux_sem_semop(struct sem_array *sma,
+static int selinux_sem_semop(struct kern_ipc_perm *sma,
 			     struct sembuf *sops, unsigned nsops, int alter)
 {
 	u32 perms;
@@ -6139,7 +6152,7 @@ static int selinux_sem_semop(struct sem_array *sma,
 	else
 		perms = SEM__READ;
 
-	return ipc_has_perm(&sma->sem_perm, perms);
+	return ipc_has_perm(sma, perms);
 }
 
 static int selinux_ipc_permission(struct kern_ipc_perm *ipcp, short flag)

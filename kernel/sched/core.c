@@ -2340,6 +2340,7 @@ int wake_up_state(struct task_struct *p, unsigned int state)
 }
 
 #ifdef CONFIG_SCHED_BORE
+extern bool sched_bore;
 extern u8   sched_burst_fork_atavistic;
 extern uint sched_burst_cache_lifetime;
 
@@ -2465,7 +2466,7 @@ static inline void inherit_burst(struct task_struct *p) {
 }
 
 static void sched_post_fork_bore(struct task_struct *p) {
-	if (p->sched_class == &fair_sched_class)
+	if (p->sched_class == &fair_sched_class && likely(sched_bore))
 		inherit_burst(p);
 	p->se.burst_penalty = p->se.prev_burst_penalty;
 }
@@ -2492,10 +2493,9 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->boost_expires        = 0;
 	p->boost_period         = 0;
 
-	#ifdef CONFIG_SCHED_BORE
+#ifdef CONFIG_SCHED_BORE
 	sched_fork_bore(p);
-	#endif // CONFIG_SCHED_BORE
-
+#endif // CONFIG_SCHED_BORE
 	INIT_LIST_HEAD(&p->se.group_node);
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -5074,27 +5074,6 @@ out_unlock:
 	return retval;
 }
 
-static bool task_is_unity_game(struct task_struct *p)
-{
-	struct task_struct *t;
-	bool ret = false;
-
-	/* Filter for Android user applications (i.e., positive adj) */
-	if (p->signal->oom_score_adj >= 0) {
-		rcu_read_lock();
-		for_each_thread(p, t) {
-			/* Check for a UnityMain thread in the thread group */
-			if (!strcmp(t->comm, "UnityMain") || !strcmp(t->comm, "UnityGfxDeviceGLES")) {
-				ret = true;
-				break;
-			}
-		}
-		rcu_read_unlock();
-	}
-
-	return ret;
-}
-
 long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
 	cpumask_var_t cpus_allowed, new_mask;
@@ -5114,20 +5093,6 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
-
-	/*
-	 * Unity-based games like to shoot themselves in the foot by setting a
-	 * nonsense CPU affinity, restricting the game to a narrow set of CPU
-	 * cores that it thinks are the "big" cores in a heterogeneous CPU. It
-	 * assumes that CPUs only have two performance domains (clusters), and
-	 * therefore royally mucks up games' CPU affinities on CPUs which have
-	 * more than two performance domains.
-	 *
-	 * Check if the target task is part of a Unity-based game and silently
-	 * ignore the setaffinity request so that it can't sabotage itself.
-	 */
-	if (task_is_unity_game(p))
-		goto out_put_task;
 
 	if (p->flags & PF_NO_SETAFFINITY) {
 		retval = -EINVAL;
@@ -6742,10 +6707,12 @@ void __init sched_init(void)
 	unsigned long alloc_size = 0, ptr;
 
 	sched_clock_init();
-	#ifdef CONFIG_SCHED_BORE
+	
+#ifdef CONFIG_SCHED_BORE
 	sched_init_bore();
-	printk(KERN_INFO "BORE (Burst-Oriented Response Enhancer) CPU Scheduler modification 5.1.0 by Masahito Suzuki");
-	#endif // CONFIG_SCHED_BORE
+	printk(KERN_INFO "BORE (Burst-Oriented Response Enhancer) CPU Scheduler modification 4.2.4 by Masahito Suzuki");
+#endif // CONFIG_SCHED_BORE
+
 	wait_bit_init();
 
 	init_clusters();

@@ -1,0 +1,52 @@
+name: Build Ginkgo Kernel (KSU)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git bc bison flex \
+            build-essential \
+            libssl-dev libelf-dev \
+            dwarves \
+            python3 \
+            ccache \
+            zip unzip \
+            lld llvm clang
+
+      - name: Setup environment
+        run: |
+          echo "ARCH=arm64" >> $GITHUB_ENV
+          echo "SUBARCH=arm64" >> $GITHUB_ENV
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "LD=ld.lld" >> $GITHUB_ENV
+          echo "LLVM=1" >> $GITHUB_ENV
+          echo "LLVM_IAS=1" >> $GITHUB_ENV
+
+      - name: Kernel defconfig
+        run: |
+          make vendor/ginkgo_defconfig
+
+      - name: Build kernel
+        run: |
+          make -j$(nproc)
+
+      - name: Upload Image.gz-dtb
+        uses: actions/upload-artifact@v4
+        with:
+          name: ginkgo-kernel
+          path: |
+            arch/arm64/boot/Image.gz*
