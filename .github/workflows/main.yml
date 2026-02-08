@@ -21,12 +21,12 @@ jobs:
           bc bison build-essential ccache curl flex git \
           libssl-dev libncurses-dev lzop python-is-python3 \
           unzip zip zstd
-
-    - name: Setup Proton Clang
-      run: |
-        wget https://github.com/kdrag0n/proton-clang/releases/download/20210130/proton-clang-20210130.tar.zst
-        tar -I zstd -xf proton-clang-20210130.tar.zst
-        echo "$(pwd)/proton-clang/bin" >> $GITHUB_PATH
+          
+   - name: Setup Clang
+  run: |
+  git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 prebuilts-clang
+    echo "CLANG_PATH=$PWD/prebuilts-clang/clang-r487747c/bin" >> $GITHUB_ENV
+    echo "$PWD/prebuilts-clang/clang-r487747c/bin" >> $GITHUB_PATH
 
     - name: Export build variables
       run: |
