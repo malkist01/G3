@@ -2,56 +2,49 @@ name: Build Kernel Ginkgo (KSU)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ksun
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    name: Build Kernel
+    runs-on: ubuntu-20.04
 
     steps:
+    # ===============================
+    # Checkout source
+    # ===============================
     - name: Checkout source
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
-        ref: ksun
+        fetch-depth: 1
 
+    # ===============================
+    # Install dependencies
+    # ===============================
     - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          bc bison build-essential ccache curl flex git \
-          libssl-dev libncurses-dev lzop python-is-python3 \
-          unzip zip zstd
-          
-   - name: Setup Clang
-  run: |
-  git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 prebuilts-clang
-    echo "CLANG_PATH=$PWD/prebuilts-clang/clang-r487747c/bin" >> $GITHUB_ENV
-    echo "$PWD/prebuilts-clang/clang-r487747c/bin" >> $GITHUB_PATH
+          bc bison build-essential ccache curl flex \
+          git gnupg gperf libncurses-dev \
+          libssl-dev libelf-dev lzop \
+          python3 python-is-python3 \
+          zip unzip zstd
 
+    # ===============================
+    # Setup AOSP Clang (STABLE)
+    # ===============================
+    - name: Setup AOSP Clang
+      run: |
+        git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 prebuilts-clang
+        echo "CLANG_PATH=$PWD/prebuilts-clang/clang-r487747c/bin" >> $GITHUB_ENV
+        echo "$PWD/prebuilts-clang/clang-r487747c/bin" >> $GITHUB_PATH
+
+    # ===============================
+    # Export build variables
+    # ===============================
     - name: Export build variables
       run: |
-        echo "ARCH=arm64" >> $GITHUB_ENV
-        echo "SUBARCH=arm64" >> $GITHUB_ENV
-        echo "CC=clang" >> $GITHUB_ENV
-        echo "LD=ld.lld" >> $GITHUB_ENV
-        echo "AR=llvm-ar" >> $GITHUB_ENV
-        echo "NM=llvm-nm" >> $GITHUB_ENV
-        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
-        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
-        echo "STRIP=llvm-strip" >> $GITHUB_ENV
-
-    - name: Kernel defconfig
-      run: |
-        make vendor/ginkgo_defconfig
-
-    - name: Build kernel
-      run: |
-        make -j$(nproc)
-
-    - name: Upload Image.gz
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-ginkgo-ksun
-        path: |
-          out/arch/arm64/boot/Image.gz
-          out/arch/arm64/boot/Image.gz-dtb
+        echo "ARCH=arm64" >> $GITHU
