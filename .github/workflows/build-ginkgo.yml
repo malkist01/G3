@@ -50,3 +50,4 @@ jobs:
           name: ginkgo-kernel
           path: |
             arch/arm64/boot/Image.gz*
+            arch/arm64/boot/dtbo.img*
