@@ -1,52 +1,67 @@
-name: Build Ginkgo Kernel (KSU)
+name: Build test
 
 on:
   workflow_dispatch:
+  watch:
+    types: [started]
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  buildtest:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set Swap Space
+        uses: pierotofy/set-swap-space@master
         with:
-          submodules: recursive
-          fetch-depth: 0
+          swap-size-gb: 10
 
-      - name: Install dependencies
+      - name: Install Packages
         run: |
-          sudo apt update
-          sudo apt install -y \
-            git bc bison flex \
-            build-essential \
-            libssl-dev libelf-dev \
-            dwarves \
-            python3 \
-            ccache \
-            zip unzip \
-            lld llvm clang
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            dialog bash sed wget git curl zip tar jq expect make cmake automake autoconf \
+            llvm lld lldb clang gcc binutils bison perl gperf gawk flex bc python3 zstd \
+            openssl unzip cpio build-essential ccache liblz4-tool libsdl1.2-dev libstdc++6 \
+            libxml2 libxml2-utils lzop pngcrush schedtool squashfs-tools xsltproc zlib1g-dev \
+            libncurses5-dev bzip2 gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf \
+            gcc-arm-linux-gnueabi dos2unix kmod
 
-      - name: Setup environment
+      - name: Start Build (with log)
         run: |
-          echo "ARCH=arm64" >> $GITHUB_ENV
-          echo "SUBARCH=arm64" >> $GITHUB_ENV
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "LD=ld.lld" >> $GITHUB_ENV
-          echo "LLVM=1" >> $GITHUB_ENV
-          echo "LLVM_IAS=1" >> $GITHUB_ENV
+          mkdir -p logs
+          bash build.sh 2>&1 | tee logs/build.txt
 
-      - name: Kernel defconfig
-        run: |
-          make vendor/ginkgo_defconfig
-
-      - name: Build kernel
-        run: |
-          make -j$(nproc)
-
-      - name: Upload Image.gz-dtb
+      - name: Upload Build Log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ginkgo-kernel
-          path: |
-            arch/arm64/boot/Image.gz*
+          name: build-log
+          path: logs/build.txt
+
+      - name: Upload AnyKernel Zip
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anykernel-zip
+          path: AnyKernel/*.zip
+
+      - name: Upload Kernel Image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-gz
+          path: out/arch/arm64/boot/Image.gz
+
+      - name: Upload DTB
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-gz-dtb
+          path: out/arch/arm64/boot/Image.gz-dtb
