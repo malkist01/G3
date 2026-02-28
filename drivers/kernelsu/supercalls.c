@@ -12,6 +12,7 @@
 #include <linux/uaccess.h>
 #include <linux/version.h>
 #include <linux/utsname.h> // utsname() and uts_sem
+
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/namei.h>
 #include <linux/susfs.h>
@@ -128,9 +129,9 @@ static int do_report_event(void __user *arg)
 			boot_complete_lock = true;
 			pr_info("boot_complete triggered\n");
 			on_boot_completed();
-#ifdef CONFIG_KSU_SUSFS
-            susfs_start_sdcard_monitor_fn();
-#endif // #ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+            susfs_is_boot_completed_triggered = true;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 		}
 		break;
 	}
@@ -572,7 +573,7 @@ static int add_try_umount(void __user *arg)
             new_entry->umountable = kstrdup(buf, GFP_KERNEL);
             if (!new_entry->umountable) {
                 kfree(new_entry);
-                return -1;
+                return -ENOMEM;
             }
 
             down_write(&mount_list_lock);
@@ -585,7 +586,7 @@ static int add_try_umount(void __user *arg)
                     up_write(&mount_list_lock);
                     kfree(new_entry->umountable);
                     kfree(new_entry);
-                    return -1;
+                    return -EEXIST;
                 }
             }
 
@@ -743,8 +744,8 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
         }
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_PATH
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-        if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS) {
-            susfs_set_hide_sus_mnts_for_non_su_procs(arg);
+        if (cmd == CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS) {
+            susfs_set_hide_sus_mnts_for_all_procs(arg);
             return 0;
         }
 #endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
@@ -1011,10 +1012,9 @@ void ksu_supercalls_init(void)
 	} else {
 		pr_info("reboot kprobe registered successfully\n");
 	}
-
-
-    sulog_init_heap(); // grab heap memory
 #endif
+
+	sulog_init_heap(); // grab heap memory
 }
 
 void ksu_supercalls_exit(void){
